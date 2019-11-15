@@ -28,8 +28,15 @@ SensorDataProducer::SensorDataProducer(
 
 void SensorDataProducer::AddOdometryMessage(
     const string& topic, const nav_msgs::Odometry::ConstPtr& msg) {
+  string temp;
+  temp = msg->header.frame_id;
+  //std::cout<<"header.frame_id: "<<msg->header.frame_id<<'\n';
+  if (temp[0]=='/')
+  {
+    temp.erase(0,1);
+  }
   auto sensor_data = ::cartographer::common::make_unique<SensorData>(
-      msg->child_frame_id,
+      temp,
       SensorData::Odometry{ToRigid3d(msg->pose.pose),
                            ToPoseCovariance(msg->pose.covariance)});
   sensor_collator_->AddSensorData(
