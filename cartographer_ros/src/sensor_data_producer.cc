@@ -29,7 +29,7 @@ SensorDataProducer::SensorDataProducer(
 void SensorDataProducer::AddOdometryMessage(
     const string& topic, const nav_msgs::Odometry::ConstPtr& msg) {
   string temp;
-  temp = msg->header.frame_id;
+  temp = "robot_1/base_footprint";
   //std::cout<<"header.frame_id: "<<msg->header.frame_id<<'\n';
   if (temp[0]=='/')
   {

@@ -30,9 +30,9 @@ using ::cartographer::transform::Rigid3d;
 using ::cartographer::kalman_filter::PoseCovariance;
 
 const string& CheckNoLeadingSlash(const string& frame_id) {
-  if (frame_id.size() > 0) {
+  /*if (frame_id.size() > 0) {
     CHECK_NE(frame_id[0], '/');
-  }
+  }*/
   return frame_id;
 }
 

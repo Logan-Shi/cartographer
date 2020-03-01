@@ -147,6 +147,7 @@ class Node {
   void PublishPoseAndScanMatchedPointCloud(
       const ::ros::WallTimerEvent& timer_event);
   void SpinOccupancyGridThreadForever();
+  void SpinOccupancySubGridThreadForever();
 
   const NodeOptions options_;
 
@@ -175,7 +176,10 @@ class Node {
   tf2_ros::TransformBroadcaster tf_broadcaster_;
 
   ::ros::Publisher occupancy_grid_publisher_;
+  ::ros::Publisher occupancy_subgrid_publisher_;
+
   std::thread occupancy_grid_thread_;
+  std::thread occupancy_subgrid_thread_;
   bool terminating_ = false GUARDED_BY(mutex_);
 
   // Time at which we last logged the rates of incoming sensor data.
@@ -315,6 +319,7 @@ void Node::Initialize() {
   // which are unique.
   std::unordered_set<string> expected_sensor_identifiers;
   // For 2D SLAM, subscribe to exactly one horizontal laser.
+  
   if (options_.use_horizontal_laser) {
     horizontal_laser_scan_subscriber_ = node_handle_.subscribe(
         kLaserScanTopic, kInfiniteSubscriberQueueSize,
@@ -399,8 +404,15 @@ void Node::Initialize() {
         node_handle_.advertise<::nav_msgs::OccupancyGrid>(
             kOccupancyGridTopic, kLatestOnlyPublisherQueueSize,
             true /* latched */);
+    //add submap publisher
+    occupancy_subgrid_publisher_=
+        node_handle_.advertise<::nav_msgs::OccupancyGrid>(
+            "submap", kLatestOnlyPublisherQueueSize,
+            true /* latched */);
     occupancy_grid_thread_ =
         std::thread(&Node::SpinOccupancyGridThreadForever, this);
+    occupancy_subgrid_thread_=
+        std::thread(&Node::SpinOccupancySubGridThreadForever, this);
   }
 
 
@@ -581,7 +593,7 @@ void Node::PublishPoseAndScanMatchedPointCloud(
 
 void Node::SpinOccupancyGridThreadForever() {
   for (;;) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     {
       carto::common::MutexLocker lock(&mutex_);
       if (terminating_) {
@@ -599,6 +611,30 @@ void Node::SpinOccupancyGridThreadForever() {
     ::nav_msgs::OccupancyGrid occupancy_grid;
     BuildOccupancyGrid(trajectory_nodes, options_, &occupancy_grid);
     occupancy_grid_publisher_.publish(occupancy_grid);
+  }
+}
+
+//publish the latest submap
+void Node::SpinOccupancySubGridThreadForever(){
+  for (;;) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    {
+      carto::common::MutexLocker lock(&mutex_);
+      if (terminating_) {
+        return;
+      }
+    }
+    /*if (occupancy_grid_publisher_.getNumSubscribers() == 0) {
+      continue;
+    }*/
+    const auto trajectory_nodes =
+        map_builder_.sparse_pose_graph()->GetTrajectoryNodes();
+    if (trajectory_nodes.empty()) {
+      continue;
+    }
+    ::nav_msgs::OccupancyGrid occupancy_subgrid;
+    BuildOccupancySubGrid(trajectory_nodes, options_, &occupancy_subgrid);
+    occupancy_subgrid_publisher_.publish(occupancy_subgrid);
   }
 }
 
