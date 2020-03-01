@@ -34,6 +34,8 @@ void SensorDataProducer::AddOdometryMessage(
   if (temp[0]=='/')
   {
     temp.erase(0,1);
+    temp = temp.replace(temp.begin()+8,temp.begin()+12,"base_footprint");
+    //std::cout<<"header.frame_id: "<<temp<<'\n';
   }
   auto sensor_data = ::cartographer::common::make_unique<SensorData>(
       temp,
