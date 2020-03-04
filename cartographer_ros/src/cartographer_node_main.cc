@@ -411,8 +411,8 @@ void Node::Initialize() {
             true /* latched */);
     occupancy_grid_thread_ =
         std::thread(&Node::SpinOccupancyGridThreadForever, this);
-    occupancy_subgrid_thread_=
-        std::thread(&Node::SpinOccupancySubGridThreadForever, this);
+    /*occupancy_subgrid_thread_=
+        std::thread(&Node::SpinOccupancySubGridThreadForever, this);*/
   }
 
 
@@ -608,14 +608,19 @@ void Node::SpinOccupancyGridThreadForever() {
     if (trajectory_nodes.empty()) {
       continue;
     }
+
+    //changed here
     ::nav_msgs::OccupancyGrid occupancy_grid;
+    ::nav_msgs::OccupancyGrid occupancy_subgrid;    
     BuildOccupancyGrid(trajectory_nodes, options_, &occupancy_grid);
+    BuildOccupancySubGrid(trajectory_nodes, options_, &occupancy_subgrid);
     occupancy_grid_publisher_.publish(occupancy_grid);
+    occupancy_subgrid_publisher_.publish(occupancy_subgrid);
   }
 }
 
 //publish the latest submap
-void Node::SpinOccupancySubGridThreadForever(){
+/*void Node::SpinOccupancySubGridThreadForever(){
   for (;;) {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     {
@@ -624,9 +629,9 @@ void Node::SpinOccupancySubGridThreadForever(){
         return;
       }
     }
-    /*if (occupancy_grid_publisher_.getNumSubscribers() == 0) {
+    if (occupancy_grid_publisher_.getNumSubscribers() == 0) {
       continue;
-    }*/
+    }
     const auto trajectory_nodes =
         map_builder_.sparse_pose_graph()->GetTrajectoryNodes();
     if (trajectory_nodes.empty()) {
@@ -636,7 +641,7 @@ void Node::SpinOccupancySubGridThreadForever(){
     BuildOccupancySubGrid(trajectory_nodes, options_, &occupancy_subgrid);
     occupancy_subgrid_publisher_.publish(occupancy_subgrid);
   }
-}
+}*/
 
 void Node::HandleSensorData(const int64 timestamp,
                             std::unique_ptr<SensorData> sensor_data) {
