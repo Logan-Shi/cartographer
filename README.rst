@@ -61,3 +61,8 @@ at `our Contribution page`_.
 
 
 just use catkin_make to build
+
+/gloabl_map是根据submaps融合得到的全局地图
+/map是最近的1000个trajectory nodes融合得到的的地图
+/submap是最近的一个trajectory nodes
+具体修改见 cartographer node main 663行至869行

@@ -21,6 +21,8 @@
 #include <vector>
 
 #include "Eigen/Core"
+#include <eigen_conversions/eigen_msg.h>
+#include <Eigen/Geometry>
 #include "cartographer/common/configuration_file_resolver.h"
 #include "cartographer/common/lua_parameter_dictionary.h"
 #include "cartographer/common/make_unique.h"
@@ -61,6 +63,11 @@
 #include "tf2_eigen/tf2_eigen.h"
 #include "tf2_ros/transform_broadcaster.h"
 #include "tf2_ros/transform_listener.h"
+#include <cartographer/common/port.h>
+#include <cartographer_ros_msgs/SubmapQuery.h>
+
+#include <future>
+#include <sstream>
 
 #include "map_writer.h"
 #include "msg_conversion.h"
@@ -78,6 +85,7 @@ DEFINE_string(configuration_directory, "",
 DEFINE_string(configuration_basename, "",
               "Basename, i.e. not containing any directory prefix, of the "
               "configuration file.");
+
 
 namespace cartographer_ros {
 namespace {
@@ -148,6 +156,7 @@ class Node {
       const ::ros::WallTimerEvent& timer_event);
   void SpinOccupancyGridThreadForever();
   void SpinOccupancySubGridThreadForever();
+  void SpinOccupancyGlobalGridThreadForever();
 
   const NodeOptions options_;
 
@@ -177,9 +186,11 @@ class Node {
 
   ::ros::Publisher occupancy_grid_publisher_;
   ::ros::Publisher occupancy_subgrid_publisher_;
+  ::ros::Publisher occupancy_globalgrid_publisher_;
 
   std::thread occupancy_grid_thread_;
   std::thread occupancy_subgrid_thread_;
+  std::thread occupancy_globalgrid_thread_;
   bool terminating_ = false GUARDED_BY(mutex_);
 
   // Time at which we last logged the rates of incoming sensor data.
@@ -409,10 +420,14 @@ void Node::Initialize() {
         node_handle_.advertise<::nav_msgs::OccupancyGrid>(
             "submap", kLatestOnlyPublisherQueueSize,
             true /* latched */);
+    occupancy_globalgrid_publisher_=
+        node_handle_.advertise<::nav_msgs::OccupancyGrid>(
+            "global_map", kLatestOnlyPublisherQueueSize,
+            true /* latched */);
     occupancy_grid_thread_ =
         std::thread(&Node::SpinOccupancyGridThreadForever, this);
-    occupancy_subgrid_thread_=
-        std::thread(&Node::SpinOccupancySubGridThreadForever, this);
+    occupancy_globalgrid_thread_=
+        std::thread(&Node::SpinOccupancyGlobalGridThreadForever, this);
   }
 
 
@@ -608,13 +623,18 @@ void Node::SpinOccupancyGridThreadForever() {
     if (trajectory_nodes.empty()) {
       continue;
     }
+    //changed here
     ::nav_msgs::OccupancyGrid occupancy_grid;
+    ::nav_msgs::OccupancyGrid occupancy_subgrid;    
     BuildOccupancyGrid(trajectory_nodes, options_, &occupancy_grid);
+    BuildOccupancySubGrid(trajectory_nodes, options_, &occupancy_subgrid);
     occupancy_grid_publisher_.publish(occupancy_grid);
+    occupancy_subgrid_publisher_.publish(occupancy_subgrid);
   }
 }
 
 //publish the latest submap
+/*
 void Node::SpinOccupancySubGridThreadForever(){
   for (;;) {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -624,9 +644,9 @@ void Node::SpinOccupancySubGridThreadForever(){
         return;
       }
     }
-    /*if (occupancy_grid_publisher_.getNumSubscribers() == 0) {
+    if (occupancy_grid_publisher_.getNumSubscribers() == 0) {
       continue;
-    }*/
+    }
     const auto trajectory_nodes =
         map_builder_.sparse_pose_graph()->GetTrajectoryNodes();
     if (trajectory_nodes.empty()) {
@@ -636,6 +656,216 @@ void Node::SpinOccupancySubGridThreadForever(){
     BuildOccupancySubGrid(trajectory_nodes, options_, &occupancy_subgrid);
     occupancy_subgrid_publisher_.publish(occupancy_subgrid);
   }
+}
+*/
+
+
+//代码说明：关于submap发布的说明
+//这是用来发布submap的程序，可能存在的问题：所有submap的orientation默认为
+//0 0 0 1，如果发现变化的情况，我以后再来改
+//速度上应该稍慢于1000个scan的地图，前期速度稍慢，但是之后增加的不会很快，最大值0.7~0.8s
+void Node::SpinOccupancyGlobalGridThreadForever(){
+  for (;;) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    {
+      carto::common::MutexLocker lock(&mutex_);
+      if (terminating_) {
+        return;
+      }
+    }
+    if (occupancy_grid_publisher_.getNumSubscribers() == 0) {
+      continue;
+    }
+    
+    ::nav_msgs::OccupancyGrid global_occupancy_grid;
+    const auto trajectory_nodes =
+        map_builder_.sparse_pose_graph()->GetTrajectoryNodes();
+    if (trajectory_nodes.empty()) {
+      continue;
+    }
+    global_occupancy_grid.header.stamp = ToRos(trajectory_nodes.back().time());
+    global_occupancy_grid.header.frame_id = options_.map_frame;
+    global_occupancy_grid.info.map_load_time = global_occupancy_grid.header.stamp;
+
+    //上面的trajectory nodes其实没有用到，只是设置了时间啥的
+    //真正用到的数据有两种：submap（内置submap类型，见cartographer mapping submaps）
+    //response_proto（submapquery的response类型，有submaptoproto函数生成）
+    //这两个是一一对应的，且内容完全一致，但是由于数据类型复杂，而且submap保护的很好，所以
+    //我使用response类型得到地图数据，二者结合得到origin
+    carto::mapping::Submaps* submaps =
+      map_builder_.GetTrajectoryBuilder(kTrajectoryBuilderId)->submaps();
+    carto::mapping::proto::SubmapQuery::Response response_proto_init;
+    const std::vector<carto::transform::Rigid3d> submap_transforms =
+      map_builder_.sparse_pose_graph()->GetSubmapTransforms(*submaps);
+    //首先提取第一个submap，设置orientation和z（都是不变量）
+    submaps->SubmapToProto(0,
+                         trajectory_nodes,
+                         submap_transforms[0], &response_proto_init);
+    std::vector<int> index=submaps->insertion_indices();
+    int total=index[0];
+    const carto::mapping::Submap* submap=submaps->Get(0);
+    global_occupancy_grid.info.origin.orientation.x=
+      response_proto_init.slice_pose().rotation().x();
+    global_occupancy_grid.info.origin.orientation.y=
+      response_proto_init.slice_pose().rotation().y();
+    global_occupancy_grid.info.origin.orientation.z=
+      response_proto_init.slice_pose().rotation().z();
+    global_occupancy_grid.info.origin.orientation.w=
+      response_proto_init.slice_pose().rotation().w();
+    global_occupancy_grid.info.resolution=
+      response_proto_init.resolution();
+    global_occupancy_grid.info.origin.position.z=response_proto_init.slice_pose().translation().z();
+
+    float resolution=response_proto_init.resolution();
+    //calculate size
+    //计算全局地图的大小，先计算大小，之后再把概率填进去
+    float origin_x=100;
+    float origin_y=100;
+    int global_height=0;
+    int global_width=0;
+    
+    std::vector<carto::mapping::proto::SubmapQuery::Response*> response_list;
+    response_list.clear();
+    std::vector<float> x_list;
+    std::vector<float> y_list;
+    std::vector<float> width_list;
+    std::vector<float> height_list;
+    for(int k=0;k<total+1;++k)
+    {
+    const carto::mapping::Submap* submap=submaps->Get(k);    
+    carto::mapping::proto::SubmapQuery::Response *response_proto
+      =new carto::mapping::proto::SubmapQuery::Response;
+    const std::vector<carto::transform::Rigid3d> submap_transforms =
+      map_builder_.sparse_pose_graph()->GetSubmapTransforms(*submaps);
+    submaps->SubmapToProto(k,
+                         trajectory_nodes,
+                         submap_transforms[k], response_proto);
+    response_proto->set_submap_version(submap->begin_laser_fan_index);
+    response_list.push_back(response_proto);
+    int width=response_proto->height();
+    int height=response_proto->width();
+    width_list.push_back(width);
+    height_list.push_back(height);
+
+    float x,y;
+    //origin的计算，花费了我大量时间，在cartographer的代码中是
+    //pose=orientation*slicepose.translation+position
+    //orientation=orientation*slicepose.rotation
+    //position 是submap的position，可以从submap里面读
+    //slicepose是proto里面的
+    //具体见drawable submap的updatetransform和update函数
+    //这里还有平移量，是由于slicepose定义在右上角所致
+    //此外，proto中height和width和map是相反的
+    x=ToGeometryMsgPose(submap_transforms[k]).position.x
+      +response_proto->slice_pose().translation().x()
+      -width*resolution;
+    y=ToGeometryMsgPose(submap_transforms[k]).position.y
+      +response_proto->slice_pose().translation().y()
+      -height*resolution;
+    if(origin_x>x)
+      origin_x=x;
+    if(origin_y>y)
+      origin_y=y;
+    x_list.push_back(x);
+    y_list.push_back(y);
+    }
+
+    for(int p=0;p<x_list.size();++p)
+    {
+      float x=x_list[p];
+      float y=y_list[p];
+      int width=width_list[p];
+      int height=height_list[p];
+      if((x-origin_x)/resolution+width>global_width)
+        global_width=(x-origin_x)/resolution+width;
+      if((y-origin_y)/resolution+height>global_height) 
+        global_height=(y-origin_y)/resolution+height;
+    }
+
+    x_list.clear();
+    y_list.clear();
+    width_list.clear();
+    height_list.clear();
+
+    global_occupancy_grid.info.origin.position.x=origin_x;
+    global_occupancy_grid.info.origin.position.y=origin_y;
+    global_occupancy_grid.info.width=global_width;
+    global_occupancy_grid.info.height=global_height;
+    global_occupancy_grid.data.clear();
+    for(int i=0;i<global_width*global_height;++i)
+      global_occupancy_grid.data.push_back(-1);
+
+    //adding data
+    //得到height width和origin后填入数据
+    for(int k=0;k<total+1;++k)
+    {
+    carto::mapping::proto::SubmapQuery::Response* response_proto=response_list[k];
+    std::string compressed_cells(response_proto->cells().begin(), response_proto->cells().end());
+    std::string cells;
+    ::cartographer::common::FastGunzipString(compressed_cells, &cells);
+    CHECK_EQ(cells.size(),2*response_proto->height()*response_proto->width());
+    
+    //下面的一系列操作都是为了解决proto的major不同，而且原点在右上角的问题。
+    int width=response_proto->height();
+    int height=response_proto->width();
+    //这是proto的左下角坐标
+    float x=ToGeometryMsgPose(submap_transforms[k]).position.x
+      +response_proto->slice_pose().translation().x()
+      -width*resolution;
+    float y=ToGeometryMsgPose(submap_transforms[k]).position.y
+      +response_proto->slice_pose().translation().y()
+      -height*resolution;
+    //这是proto左下角相对map origin的位移 
+    int adding_y=float(float(y-origin_y)/resolution);
+    int adding_x=float(float(x-origin_x)/resolution);
+    //adding data
+    for (int i=0;i<cells.size()/2;++i)
+    {
+      double value=(double)cells[2*i];
+      double alpha=(double)cells[2*i+1];
+      //这里的x1和y1是，转换为map的major和左下角后的坐标
+      //即点在proto中的坐标（以map的坐标定义方式）
+      int x1=i/height;
+      int y1=i-x1*height;
+      x1=width-1-x1;
+      y1=height-1-y1;
+      int real_idx=(y1+adding_y)*global_occupancy_grid.info.width+
+                    x1+adding_x;
+      if(real_idx>=global_occupancy_grid.info.height*global_occupancy_grid.info.width)
+        continue;
+      float v=0;
+      //这一段公式是把cell中的值转化为概率，具体可见mapping submaps和mapping 2d submaps
+      //公式就是下列的算式，value和alpha共同对应于一个概率值  
+      if(value>0)
+      {
+        v=(127-value)*(log(9)-log(0.111))/254+log(0.111);
+        v=exp(v);
+        v=v/(1+v);
+        if(v<0.45)
+          v=0;
+        else  
+          v=-1;  
+      }
+      else
+      {
+        v=(127+alpha)*(log(9)-log(0.111))/254+log(0.111);
+        v=exp(v);
+        v=v/(1+v);
+        if(v>0.55)
+          v=100;
+        else
+          v=-1;
+      }
+      if(global_occupancy_grid.data[real_idx]!=v && v!=-1)
+      {
+      global_occupancy_grid.data[real_idx]=v; 
+      }     
+    }
+    cells.clear();
+    compressed_cells.clear();
+    }
+    occupancy_globalgrid_publisher_.publish(global_occupancy_grid);
+}
 }
 
 void Node::HandleSensorData(const int64 timestamp,

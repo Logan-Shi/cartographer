@@ -54,4 +54,6 @@ generate_messages(
     geometry_msgs
 )
 
-catkin_package()
+catkin_package(
+  CATKIN_DEPENDS message_runtime
+)

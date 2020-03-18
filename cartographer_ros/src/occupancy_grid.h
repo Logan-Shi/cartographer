@@ -33,8 +33,10 @@ void BuildOccupancySubGrid(
     const std::vector<::cartographer::mapping::TrajectoryNode>&
         trajectory_nodes,
     const NodeOptions& options, ::nav_msgs::OccupancyGrid* occupancy_grid);
-
+void BuildOccupancyGlobalGrid(
+    const std::vector<::cartographer::mapping::TrajectoryNode>&
+        trajectory_nodes,
+    const NodeOptions& options, ::nav_msgs::OccupancyGrid* occupancy_grid);
 }  // namespace cartographer_ros
-
 
 #endif  // CARTOGRAPHER_ROS_OCCUPANCY_GRID_H_

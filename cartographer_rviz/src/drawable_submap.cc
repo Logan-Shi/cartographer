@@ -162,6 +162,7 @@ void DrawableSubmap::UpdateSceneNode() {
   ::cartographer::common::FastGunzipString(compressed_cells, &cells);
   tf::poseMsgToEigen(response_.slice_pose, slice_pose_);
   UpdateTransform();
+  std::cout<<cells<<std::endl;
   query_in_progress_ = false;
   // The call to Ogre's loadRawData below does not work with an RG texture,
   // therefore we create an RGB one whose blue channel is always 0.
