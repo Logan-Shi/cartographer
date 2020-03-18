@@ -426,8 +426,13 @@ void Node::Initialize() {
             true /* latched */);
     occupancy_grid_thread_ =
         std::thread(&Node::SpinOccupancyGridThreadForever, this);
+<<<<<<< HEAD
     occupancy_globalgrid_thread_=
         std::thread(&Node::SpinOccupancyGlobalGridThreadForever, this);
+=======
+    /*occupancy_subgrid_thread_=
+        std::thread(&Node::SpinOccupancySubGridThreadForever, this);*/
+>>>>>>> 18528a2ec3a80315e0212dd321288dd33b33176e
   }
 
 
@@ -623,6 +628,10 @@ void Node::SpinOccupancyGridThreadForever() {
     if (trajectory_nodes.empty()) {
       continue;
     }
+<<<<<<< HEAD
+=======
+
+>>>>>>> 18528a2ec3a80315e0212dd321288dd33b33176e
     //changed here
     ::nav_msgs::OccupancyGrid occupancy_grid;
     ::nav_msgs::OccupancyGrid occupancy_subgrid;    
@@ -634,8 +643,12 @@ void Node::SpinOccupancyGridThreadForever() {
 }
 
 //publish the latest submap
+<<<<<<< HEAD
 /*
 void Node::SpinOccupancySubGridThreadForever(){
+=======
+/*void Node::SpinOccupancySubGridThreadForever(){
+>>>>>>> 18528a2ec3a80315e0212dd321288dd33b33176e
   for (;;) {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     {
@@ -656,6 +669,7 @@ void Node::SpinOccupancySubGridThreadForever(){
     BuildOccupancySubGrid(trajectory_nodes, options_, &occupancy_subgrid);
     occupancy_subgrid_publisher_.publish(occupancy_subgrid);
   }
+<<<<<<< HEAD
 }
 */
 
@@ -867,6 +881,9 @@ void Node::SpinOccupancyGlobalGridThreadForever(){
     occupancy_globalgrid_publisher_.publish(global_occupancy_grid);
 }
 }
+=======
+}*/
+>>>>>>> 18528a2ec3a80315e0212dd321288dd33b33176e
 
 void Node::HandleSensorData(const int64 timestamp,
                             std::unique_ptr<SensorData> sensor_data) {

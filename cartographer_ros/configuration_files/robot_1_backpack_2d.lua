@@ -31,8 +31,8 @@ options = {
   horizontal_laser_max_range = 9.9,
   horizontal_laser_missing_echo_ray_length = 9.9,
   num_lasers_3d = 0,
-  lookup_transform_timeout_sec = 20,
-  submap_publish_period_sec = 0.3,
+  lookup_transform_timeout_sec = 1.0,
+  submap_publish_period_sec = 0.5,
   pose_publish_period_sec = 5e-3,
 }
 
